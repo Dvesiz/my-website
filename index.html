@@ -3,70 +3,260 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>我的第一个网页</title>
+    <title>贪吃蛇游戏</title>
     <style>
         body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #2c3e50;
             font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
+            flex-direction: column;
         }
-        .container {
-            background-color: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        h1 {
-            color: #333;
+
+        .game-container {
             text-align: center;
+            background-color: #34495e;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.3);
         }
-        h2 {
-            color: #666;
+
+        h1 {
+            color: #ecf0f1;
+            margin-bottom: 10px;
         }
-        p {
-            line-height: 1.6;
-            color: #555;
+
+        .score {
+            color: #e74c3c;
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 20px;
         }
-        .button {
-            background-color: #007bff;
+
+        #gameCanvas {
+            border: 3px solid #ecf0f1;
+            background-color: #1a252f;
+            border-radius: 5px;
+        }
+
+        .controls {
+            margin-top: 20px;
+            color: #ecf0f1;
+        }
+
+        .game-over {
+            color: #e74c3c;
+            font-size: 24px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        .restart-btn {
+            background-color: #e74c3c;
             color: white;
-            padding: 10px 20px;
             border: none;
+            padding: 10px 20px;
+            font-size: 16px;
             border-radius: 5px;
             cursor: pointer;
-            font-size: 16px;
-            margin: 10px 5px;
+            margin-top: 10px;
         }
-        .button:hover {
-            background-color: #0056b3;
+
+        .restart-btn:hover {
+            background-color: #c0392b;
+        }
+
+        .instructions {
+            color: #bdc3c7;
+            font-size: 14px;
+            margin-top: 15px;
+            line-height: 1.5;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>欢迎来到我的网页</h1>
-        
-        <h2>关于我</h2>
-        <p>这是一个简单的HTML示例页面。HTML（超文本标记语言）是用来创建网页的标准标记语言。</p>
-        
-        <h2>我的兴趣</h2>
-        <ul>
-            <li>学习编程</li>
-            <li>阅读书籍</li>
-            <li>听音乐</li>
-            <li>旅行</li>
-        </ul>
-        
-        <h2>联系方式</h2>
-        <p>📧 邮箱：zhaoluod@email.com</p>
-        <p>📱 电话：17305195555</p>
-        
-        <div style="text-align: center; margin-top: 30px;">
-            <button class="button" onclick="alert('你好！')">点击问候</button>
-            <button class="button" onclick="alert('这是一个简单的网页！')">了解更多</button>
+    <div class="game-container">
+        <h1>🐍 贪吃蛇游戏</h1>
+        <div class="score">得分: <span id="score">0</span></div>
+        <canvas id="gameCanvas" width="400" height="400"></canvas>
+        <div id="gameOver" class="game-over" style="display: none;">
+            游戏结束！
+            <br>
+            <button class="restart-btn" onclick="restartGame()">重新开始</button>
+        </div>
+        <div class="instructions">
+            使用方向键控制蛇的移动<br>
+            吃到红色食物可以增长身体和得分
         </div>
     </div>
+
+    <script>
+        // 获取画布和上下文
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const gameOverElement = document.getElementById('gameOver');
+
+        // 游戏设置
+        const gridSize = 20;
+        const tileCount = canvas.width / gridSize;
+
+        let snake = [
+            {x: 10, y: 10}
+        ];
+        let food = {};
+        let dx = 0;
+        let dy = 0;
+        let score = 0;
+        let gameRunning = true;
+
+        // 生成随机食物位置
+        function randomFood() {
+            food = {
+                x: Math.floor(Math.random() * tileCount),
+                y: Math.floor(Math.random() * tileCount)
+            };
+        }
+
+        // 绘制游戏元素
+        function drawGame() {
+            // 清空画布
+            ctx.fillStyle = '#1a252f';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制蛇
+            ctx.fillStyle = '#2ecc71';
+            for (let segment of snake) {
+                ctx.fillRect(segment.x * gridSize, segment.y * gridSize, gridSize - 2, gridSize - 2);
+            }
+
+            // 绘制蛇头（不同颜色）
+            ctx.fillStyle = '#27ae60';
+            ctx.fillRect(snake[0].x * gridSize, snake[0].y * gridSize, gridSize - 2, gridSize - 2);
+
+            // 绘制食物
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillRect(food.x * gridSize, food.y * gridSize, gridSize - 2, gridSize - 2);
+        }
+
+        // 移动蛇
+        function moveSnake() {
+            if (!gameRunning) return;
+
+            const head = {x: snake[0].x + dx, y: snake[0].y + dy};
+
+            // 检查边界碰撞
+            if (head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount) {
+                gameOver();
+                return;
+            }
+
+            // 检查自身碰撞
+            for (let segment of snake) {
+                if (head.x === segment.x && head.y === segment.y) {
+                    gameOver();
+                    return;
+                }
+            }
+
+            snake.unshift(head);
+
+            // 检查是否吃到食物
+            if (head.x === food.x && head.y === food.y) {
+                score += 10;
+                scoreElement.textContent = score;
+                randomFood();
+            } else {
+                snake.pop();
+            }
+        }
+
+        // 游戏结束
+        function gameOver() {
+            gameRunning = false;
+            gameOverElement.style.display = 'block';
+        }
+
+        // 重新开始游戏
+        function restartGame() {
+            snake = [{x: 10, y: 10}];
+            dx = 0;
+            dy = 0;
+            score = 0;
+            scoreElement.textContent = score;
+            gameRunning = true;
+            gameOverElement.style.display = 'none';
+            randomFood();
+        }
+
+        // 键盘控制
+        document.addEventListener('keydown', (e) => {
+            if (!gameRunning) return;
+
+            const key = e.key;
+            
+            if (key === 'ArrowLeft' && dx !== 1) {
+                dx = -1;
+                dy = 0;
+            } else if (key === 'ArrowUp' && dy !== 1) {
+                dx = 0;
+                dy = -1;
+            } else if (key === 'ArrowRight' && dx !== -1) {
+                dx = 1;
+                dy = 0;
+            } else if (key === 'ArrowDown' && dy !== -1) {
+                dx = 0;
+                dy = 1;
+            }
+        });
+
+        // 游戏主循环
+        function gameLoop() {
+            moveSnake();
+            drawGame();
+        }
+
+        // 初始化游戏
+        randomFood();
+        setInterval(gameLoop, 150);
+
+        // 添加触摸控制（移动设备支持）
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        canvas.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (!gameRunning) return;
+            
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
+            
+            const deltaX = touchEndX - touchStartX;
+            const deltaY = touchEndY - touchStartY;
+            
+            if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                // 水平滑动
+                if (deltaX > 0 && dx !== -1) {
+                    dx = 1; dy = 0; // 右
+                } else if (deltaX < 0 && dx !== 1) {
+                    dx = -1; dy = 0; // 左
+                }
+            } else {
+                // 垂直滑动
+                if (deltaY > 0 && dy !== -1) {
+                    dx = 0; dy = 1; // 下
+                } else if (deltaY < 0 && dy !== 1) {
+                    dx = 0; dy = -1; // 上
+                }
+            }
+        });
+    </script>
 </body>
 </html>
