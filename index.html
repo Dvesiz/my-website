@@ -1,37 +1,455 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>3D Interactive Christmas Tree</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; }
+        
+        /* 顶部标题 - 衬线体 */
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            pointer-events: none; /* 让鼠标事件穿透到 Canvas */
+            z-index: 10;
+        }
+        
+        h1 {
+            font-family: 'Times New Roman', serif; /* 衬线体 */
+            color: #d4af37; /* 香槟金 */
+            font-size: 2.5rem;
+            letter-spacing: 5px;
+            text-shadow: 0 0 10px rgba(212, 175, 55, 0.5);
+            margin: 0;
+            font-weight: 100;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #d4af37;
+            font-family: sans-serif;
+            pointer-events: none;
+            transition: opacity 0.5s;
+        }
+    </style>
 </head>
 <body>
-    <div id="app">
-        <button v-on:click="money">点我有惊喜</button> &nbsp;
-        <button @click="love">再点更惊喜</button>
+
+    <div id="ui-layer">
+        <h1>MERRY CHRISTMAS</h1>
     </div>
+    
+    <div id="loading">正在加载资源...</div>
+
+    <audio id="bgm" loop>
+        <source src="https://commondatastorage.googleapis.com/codeskulptor-assets/Epoq-Lepidoptera.ogg" type="audio/ogg"> 
+        </audio>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "gsap": "https://unpkg.com/gsap@3.12.5/index.js"
+            }
+        }
+    </script>
 
     <script type="module">
-        //导入vue模块
-        import { createApp} from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js'
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import gsap from 'gsap';
 
-        //创建vue应用实例
-        createApp({
-            data() {
-                return {
-                    //定义数据
-                }
-            },
-            methods:{
-                money: function(){
-                    alert('送你钱100')
-                },
-                love: function(){
-                    alert('爱你一万年')
+        // --- 配置参数 ---
+        const COUNT = 1800; // 几何体总数 (为了性能和效果平衡)
+        const COLORS = {
+            gold: new THREE.Color(0xffd700),
+            red: new THREE.Color(0xcc0000),
+            green: new THREE.Color(0x004d00),
+            darkGold: new THREE.Color(0xb8860b)
+        };
+        
+        // --- 场景初始化 ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.02); // 雾化增加深邃感
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 25);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false }); // Bloom需要关闭原生AA
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ReinhardToneMapping;
+        document.body.appendChild(renderer.domElement);
+
+        // --- 灯光系统 (为了PBR效果) ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffd700, 2);
+        dirLight.position.set(10, 20, 10);
+        scene.add(dirLight);
+
+        const pointLight = new THREE.PointLight(0xff0000, 5, 50);
+        pointLight.position.set(0, 10, 0);
+        scene.add(pointLight);
+
+        // --- 后期处理 (Bloom 发光) ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0.2;
+        bloomPass.strength = 0.6; // 发光强度
+        bloomPass.radius = 0.5;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- 控制器 ---
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 1.0;
+        
+        // --- 数据存储 ---
+        // 存储三种状态的位置数据：树、爆炸、文字
+        const posTree = [];
+        const posExplode = [];
+        const posText = [];
+        
+        // 当前用于渲染的临时变量
+        const dummy = new THREE.Object3D();
+        const position = new THREE.Vector3();
+        const rotation = new THREE.Euler();
+        const quaternion = new THREE.Quaternion();
+        const scale = new THREE.Vector3();
+
+        // 状态机
+        let currentState = 0; // 0: Tree, 1: Explode, 2: Text
+        let isAnimating = false;
+        
+        // InstancedMeshes
+        let sphereMesh, boxMesh;
+        let starMesh; // 树顶星星
+
+        // --- 核心逻辑 ---
+
+        async function init() {
+            // 1. 生成树的形态数据
+            generateTreePositions();
+            
+            // 2. 生成爆炸形态数据
+            generateExplodePositions();
+
+            // 3. 加载字体并生成文字形态数据
+            await loadFontAndGenerateText();
+
+            // 4. 创建 InstancedMesh
+            createMeshes();
+
+            // 5. 创建树顶装饰
+            createTopper();
+
+            // 6. 移除Loading
+            document.getElementById('loading').style.opacity = 0;
+
+            // 7. 开始循环
+            animate();
+
+            // 8. 绑定交互
+            setupInteraction();
+        }
+
+        // --- 数据生成函数 ---
+
+        function generateTreePositions() {
+            for (let i = 0; i < COUNT; i++) {
+                // 圆锥螺旋算法
+                const progress = i / COUNT; 
+                const angle = progress * Math.PI * 20; // 螺旋圈数
+                const radius = (1 - progress) * 6; // 底部半径6，顶部0
+                const y = progress * 12 - 6; // 高度范围 -6 到 6
+                
+                const x = Math.cos(angle) * radius + (Math.random() - 0.5) * 0.5; // 加一点随机抖动
+                const z = Math.sin(angle) * radius + (Math.random() - 0.5) * 0.5;
+
+                posTree.push({ x, y, z });
+            }
+        }
+
+        function generateExplodePositions() {
+            for (let i = 0; i < COUNT; i++) {
+                // 球形随机分布
+                const phi = Math.acos(-1 + (2 * i) / COUNT);
+                const theta = Math.sqrt(COUNT * Math.PI) * phi;
+                const r = 15 + Math.random() * 10; // 爆炸半径
+
+                posExplode.push({
+                    x: r * Math.cos(theta) * Math.sin(phi),
+                    y: r * Math.sin(theta) * Math.sin(phi),
+                    z: r * Math.cos(phi)
+                });
+            }
+        }
+
+        function loadFontAndGenerateText() {
+            return new Promise((resolve) => {
+                const loader = new FontLoader();
+                // 使用标准 bold 字体
+                loader.load('https://unpkg.com/three@0.160.0/examples/fonts/helvetiker_bold.typeface.json', function (font) {
+                    const geometry = new TextGeometry('MERRY\nCHRISTMAS', {
+                        font: font,
+                        size: 2,
+                        height: 0.5,
+                        curveSegments: 12,
+                        bevelEnabled: true,
+                        bevelThickness: 0.1,
+                        bevelSize: 0.05,
+                        bevelSegments: 5
+                    });
+
+                    geometry.center();
+                    geometry.computeBoundingBox();
+
+                    // 从几何体表面随机采样点
+                    // 这里为了简单，我们不使用 Raycaster 采样，而是基于顶点散布+插值
+                    // 或者更简单：在包围盒内随机生成点，但这不像字。
+                    // 更好的方法：TextGeometry 本身有很多顶点，我们直接取顶点，如果不够就重复取
+                    
+                    const posAttribute = geometry.attributes.position;
+                    const vertexCount = posAttribute.count;
+
+                    for (let i = 0; i < COUNT; i++) {
+                        // 循环取顶点坐标，确保填满 COUNT 个实例
+                        const index = i % vertexCount; 
+                        posText.push({
+                            x: posAttribute.getX(index) * 1.5, // 放大一点
+                            y: posAttribute.getY(index) * 1.5,
+                            z: posAttribute.getZ(index) * 1.5
+                        });
+                    }
+                    resolve();
+                });
+            });
+        }
+
+        // --- 创建网格 ---
+
+        function createMeshes() {
+            // PBR 材质
+            const materialSphere = new THREE.MeshStandardMaterial({
+                color: COLORS.gold,
+                emissive: COLORS.red,
+                emissiveIntensity: 0.2,
+                roughness: 0.2,
+                metalness: 0.9,
+            });
+
+            const materialBox = new THREE.MeshStandardMaterial({
+                color: COLORS.green,
+                roughness: 0.3,
+                metalness: 0.6,
+            });
+
+            // 几何体
+            const geoSphere = new THREE.SphereGeometry(0.15, 16, 16);
+            const geoBox = new THREE.BoxGeometry(0.25, 0.25, 0.25);
+
+            // 一半球体，一半方块
+            sphereMesh = new THREE.InstancedMesh(geoSphere, materialSphere, Math.floor(COUNT / 2));
+            boxMesh = new THREE.InstancedMesh(geoBox, materialBox, Math.ceil(COUNT / 2));
+
+            // 初始化位置（在树的状态）
+            updateInstances(0); // 0 = 100% Tree state
+
+            scene.add(sphereMesh);
+            scene.add(boxMesh);
+        }
+
+        function createTopper() {
+            const geo = new THREE.IcosahedronGeometry(0.8, 0);
+            const mat = new THREE.MeshStandardMaterial({
+                color: 0xffd700,
+                emissive: 0xffaa00,
+                emissiveIntensity: 0.8,
+                roughness: 0,
+                metalness: 1
+            });
+            starMesh = new THREE.Mesh(geo, mat);
+            starMesh.position.set(0, 6.5, 0);
+            scene.add(starMesh);
+        }
+
+        // --- 核心动画与更新逻辑 ---
+
+        // 此函数负责根据 progress (0~1) 在两个状态之间插值
+        // fromData: 源位置数组, toData: 目标位置数组
+        function updateTransition(fromData, toData, progress) {
+            let sphereIdx = 0;
+            let boxIdx = 0;
+
+            for (let i = 0; i < COUNT; i++) {
+                const from = fromData[i];
+                const to = toData[i];
+
+                // 线性插值
+                const cx = from.x + (to.x - from.x) * progress;
+                const cy = from.y + (to.y - from.y) * progress;
+                const cz = from.z + (to.z - from.z) * progress;
+
+                dummy.position.set(cx, cy, cz);
+                
+                // 自转一下让它看起来生动
+                dummy.rotation.set(progress * Math.PI, progress * Math.PI, 0);
+                dummy.updateMatrix();
+
+                // 分配给两个 Mesh
+                if (i % 2 === 0) {
+                    sphereMesh.setMatrixAt(sphereIdx++, dummy.matrix);
+                    // 动态改变球体颜色（例如爆炸时变红，树时变金）
+                    // 为了性能这里简化，只改变位置
+                } else {
+                    boxMesh.setMatrixAt(boxIdx++, dummy.matrix);
                 }
             }
-        }).mount("#app");//控制html元素
+            sphereMesh.instanceMatrix.needsUpdate = true;
+            boxMesh.instanceMatrix.needsUpdate = true;
+        }
+        
+        // 快捷设置初始状态
+        function updateInstances(stateIndex) {
+            // 这里为了简单，直接复用 Transition 逻辑，progress=1
+            // stateIndex 0: Tree, 1: Explode, 2: Text
+            let targetData = posTree;
+            if (stateIndex === 1) targetData = posExplode;
+            if (stateIndex === 2) targetData = posText;
+            
+            // 初始从自己到自己
+            updateTransition(targetData, targetData, 1);
+        }
 
+        // --- 交互处理 ---
+
+        function setupInteraction() {
+            let isDragging = false;
+            let mouseDownTime = 0;
+
+            window.addEventListener('mousedown', () => {
+                isDragging = false;
+                mouseDownTime = Date.now();
+                controls.autoRotate = false; // 用户操作时暂停自转
+            });
+
+            window.addEventListener('mousemove', () => {
+                isDragging = true;
+            });
+
+            window.addEventListener('mouseup', (e) => {
+                const clickDuration = Date.now() - mouseDownTime;
+                
+                // 只有短按且没有大幅度拖拽才算点击
+                if (clickDuration < 200) {
+                    handleClick();
+                } else {
+                    // 恢复自转（如果需要）
+                     controls.autoRotate = true; 
+                }
+            });
+        }
+
+        function handleClick() {
+            if (isAnimating) return;
+            isAnimating = true;
+
+            // 播放音乐 (浏览器策略要求必须有用户交互才能播放)
+            const bgm = document.getElementById('bgm');
+            if (bgm.paused) bgm.play().catch(e => console.log("Audio play blocked"));
+
+            let fromData, toData;
+
+            // 状态机流转
+            if (currentState === 0) {
+                // Tree -> Explode
+                fromData = posTree;
+                toData = posExplode;
+                currentState = 1;
+                // 隐藏星星
+                gsap.to(starMesh.scale, { x:0, y:0, z:0, duration: 0.5 });
+            } else if (currentState === 1) {
+                // Explode -> Text
+                fromData = posExplode;
+                toData = posText;
+                currentState = 2;
+            } else {
+                // Text -> Tree
+                fromData = posText;
+                toData = posTree;
+                currentState = 0;
+                // 显示星星
+                gsap.to(starMesh.scale, { x:1, y:1, z:1, duration: 1, delay: 1 });
+            }
+
+            // 使用 GSAP 进行数据驱动的动画
+            const animObj = { val: 0 };
+            
+            // 动画效果配置
+            let duration = 1.5;
+            let ease = "power2.inOut";
+            
+            if (currentState === 1) { duration = 0.8; ease = "back.out(1.7)"; } // 爆炸快一点
+
+            gsap.to(animObj, {
+                val: 1,
+                duration: duration,
+                ease: ease,
+                onUpdate: () => {
+                    updateTransition(fromData, toData, animObj.val);
+                },
+                onComplete: () => {
+                    isAnimating = false;
+                    // 如果回到树的状态，恢复自转
+                    if (currentState === 0) controls.autoRotate = true;
+                    else controls.autoRotate = false; // 文字状态不自转方便阅读
+                }
+            });
+        }
+
+        // --- 渲染循环 ---
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            // 树顶星星自转
+            if (starMesh) {
+                starMesh.rotation.y += 0.02;
+                starMesh.rotation.z = Math.sin(Date.now() * 0.001) * 0.1;
+            }
+
+            // 使用 bloom composer 渲染
+            composer.render();
+        }
+
+        // 窗口大小调整
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        init();
     </script>
 </body>
 </html>
